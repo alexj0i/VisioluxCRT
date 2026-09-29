@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visiolux</title>
+<style>
+  :root { --c: #46ff78; --f: #0c2a14; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: #000; color: var(--c);
+         font: 16px/1.4 ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: 2px; }
+  .etat { opacity: .75; margin-bottom: 18px; }
+  section { border: 2px solid var(--c); padding: 12px; margin-bottom: 14px; }
+  h2 { font-size: 14px; margin: 0 0 10px; letter-spacing: 1px; opacity: .8; }
+  .grille { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button, select, textarea, input[type=file] {
+    font: inherit; color: var(--c); background: #000; border: 2px solid var(--c);
+    padding: 12px 8px; width: 100%; border-radius: 0; }
+  button { cursor: pointer; text-transform: uppercase; }
+  button:active, button.actif { background: var(--c); color: #000; }
+  textarea { min-height: 80px; resize: vertical; margin-bottom: 8px; text-transform: uppercase; }
+  input[type=file] { margin-bottom: 8px; padding: 8px; }
+  .ligne { display: flex; gap: 8px; align-items: center; }
+  .ligne > * { flex: 1; }
+  .danger { border-style: dashed; }
+  #info { min-height: 1.4em; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>&gt; VISIOLUX_</h1>
+<div class="etat" id="affiche">Connexion…</div>
+
+<section>
+  <h2>VISUEL</h2>
+  <div class="grille" id="scenes"></div>
+</section>
+
+<section>
+  <h2>DÉFILEMENT AUTOMATIQUE</h2>
+  <div class="ligne">
+    <button id="auto">…</button>
+    <select id="duree">
+      <option value="30">30 s</option><option value="60">1 min</option>
+      <option value="120">2 min</option><option value="300">5 min</option>
+    </select>
+  </div>
+</section>
+
+<section>
+  <h2>COULEUR</h2>
+  <div class="grille" id="couleurs" style="grid-template-columns:1fr 1fr 1fr"></div>
+</section>
+
+<section>
+  <h2>MESSAGE</h2>
+  <textarea id="texte" maxlength="400" placeholder="Texte à afficher"></textarea>
+  <button id="envoyer">Afficher le message</button>
+</section>
+
+<section>
+  <h2>IMAGE</h2>
+  <input type="file" id="fichier" accept="image/*">
+  <button id="envoyerImage">Envoyer l'image</button>
+</section>
+
+<section class="danger">
+  <h2>SYSTÈME</h2>
+  <div class="grille">
+    <button id="redemarrer">Redémarrer</button>
+    <button id="eteindre">Éteindre</button>
+  </div>
+</section>
+
+<div id="info"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const TEINTES = { vert: "#46ff78", ambre: "#ffb028", blanc: "#ebebeb" };
+let etat = null;
+
+function info(t) { $("info").textContent = t; }
+
+async function post(url, corps) {
+  const opts = { method: "POST" };
+  if (corps instanceof FormData) opts.body = corps;
+  else { opts.headers = { "Content-Type": "application/json" }; opts.body = JSON.stringify(corps); }
+  try {
+    const r = await fetch(url, opts);
+    const j = await r.json();
+    if (!j.ok) info("Erreur : " + j.erreur);
+    return j.ok;
+  } catch (e) { info("Pi injoignable"); return false; }
+}
+
+function rendre() {
+  const libelles = Object.fromEntries(etat.scenes);
+  $("affiche").textContent = "À l'écran : " + (libelles[etat.affiche] || "…");
+  document.documentElement.style.setProperty("--c", TEINTES[etat.couleur] || TEINTES.vert);
+
+  const sc = $("scenes");
+  if (!sc.children.length) {
+    for (const [nom, lib] of etat.scenes) {
+      const b = document.createElement("button");
+      b.textContent = lib; b.dataset.nom = nom;
+      b.onclick = async () => { if (await post("/api/scene", { scene: nom })) maj(); };
+      sc.appendChild(b);
+    }
+    for (const c of etat.couleurs) {
+      const b = document.createElement("button");
+      b.textContent = c; b.dataset.nom = c;
+      b.onclick = async () => { if (await post("/api/reglages", { couleur: c })) maj(); };
+      $("couleurs").appendChild(b);
+    }
+  }
+  for (const b of sc.children) b.classList.toggle("actif", b.dataset.nom === etat.affiche);
+  for (const b of $("couleurs").children) b.classList.toggle("actif", b.dataset.nom === etat.couleur);
+  $("auto").textContent = etat.auto ? "Activé" : "Désactivé";
+  $("auto").classList.toggle("actif", etat.auto);
+  $("duree").value = String(etat.duree);
+}
+
+async function maj() {
+  try { etat = await (await fetch("/api/etat")).json(); rendre(); }
+  catch (e) { $("affiche").textContent = "Pi injoignable"; }
+}
+
+$("auto").onclick = async () => { if (await post("/api/reglages", { auto: !etat.auto })) maj(); };
+$("duree").onchange = async e => { if (await post("/api/reglages", { duree: +e.target.value })) maj(); };
+$("envoyer").onclick = async () => {
+  if (await post("/api/message", { texte: $("texte").value })) { info("Message affiché"); maj(); }
+};
+$("envoyerImage").onclick = async () => {
+  const f = $("fichier").files[0];
+  if (!f) return info("Choisis d'abord une image");
+  info("Envoi…");
+  const fd = new FormData(); fd.append("image", f);
+  if (await post("/api/image", fd)) { info("Image affichée"); maj(); }
+};
+$("redemarrer").onclick = async () => {
+  if (confirm("Redémarrer le Raspberry Pi ?") && await post("/api/systeme", { action: "redemarrage" }))
+    info("Redémarrage… la page revient dans 1 minute environ.");
+};
+$("eteindre").onclick = async () => {
+  if (confirm("Éteindre le Raspberry Pi ?") && await post("/api/systeme", { action: "arret" }))
+    info("Arrêt en cours. Attends 20 s avant de débrancher.");
+};
+
+maj();
+setInterval(maj, 3000);
+</script>
+</body>
+</html>
